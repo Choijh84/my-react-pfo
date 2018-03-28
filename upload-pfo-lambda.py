@@ -5,21 +5,30 @@ import zipfile
 import mimetypes
 
 def lambda_handler(event, context):
-    s3 = boto3.resource('s3', config=Config(signature_version='s3v4'))
+    sns = boto3.resource('sns')
+    topic = sns.Topic('arn:aws:sns:ap-northeast-2:754940531641:DeployPfoTopic')
     
-    pfo_bucket = s3.Bucket('serverless-react-pfo')
-    build_bucket = s3.Bucket('serverless-pfo-build')
+    try: 
+        s3 = boto3.resource('s3', config=Config(signature_version='s3v4'))
     
-    pfo_zip = StringIO.StringIO()
-    build_bucket.download_fileobj('portfoliobuild.zip',  pfo_zip)
+        pfo_bucket = s3.Bucket('serverless-react-pfo')
+        build_bucket = s3.Bucket('serverless-pfo-build')
+        
+        pfo_zip = StringIO.StringIO()
+        build_bucket.download_fileobj('portfoliobuild.zip',  pfo_zip)
+        
+        with zipfile.ZipFile(pfo_zip) as myzip: 
+            for nm in myzip.namelist(): 
+                obj = myzip.open(nm)
+                pfo_bucket.upload_fileobj(obj, nm, 
+                    ExtraArgs={'ContentType': mimetypes.guess_type(nm)[0]})
+                pfo_bucket.Object(nm).Acl().put(ACL='public-read')
+                
+        topic.publish(Subject='Portfolio Deployed', Message='Portfolio deployed successfully')
+    except: 
+        topic.publish(Subject='Portfolio Deploy Failed', Message='Portfolio deploy failed')
+        raise
     
-    with zipfile.ZipFile(pfo_zip) as myzip: 
-        for nm in myzip.namelist(): 
-            obj = myzip.open(nm)
-            pfo_bucket.upload_fileobj(obj, nm, 
-                ExtraArgs={'ContentType': mimetypes.guess_type(nm)[0]})
-            pfo_bucket.Object(nm).Acl().put(ACL='public-read')
-            
-    return 'Hello World'
+    return 'Job Done'
             
 
