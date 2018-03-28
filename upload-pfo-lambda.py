@@ -8,14 +8,28 @@ def lambda_handler(event, context):
     sns = boto3.resource('sns')
     topic = sns.Topic('arn:aws:sns:ap-northeast-2:754940531641:DeployPfoTopic')
     
+    location = {
+        "bucketName": 'serverless-pfo-build', 
+        "objectKey": 'portfoliobuild.zip'
+    }
+    
     try: 
+        job = event.get("CodePipeline.job")
+        
+        if job: 
+            for artifact in job["data"]["inputArtifacts"]:
+                if artifact["name"] == "MyAppBuild":
+                    location = artifact["location"]["s3Location"]
+        
+        print "Building portfolio from " + str(location)
+        
         s3 = boto3.resource('s3', config=Config(signature_version='s3v4'))
     
         pfo_bucket = s3.Bucket('serverless-react-pfo')
-        build_bucket = s3.Bucket('serverless-pfo-build')
+        build_bucket = s3.Bucket(location["bucketName"])
         
         pfo_zip = StringIO.StringIO()
-        build_bucket.download_fileobj('portfoliobuild.zip',  pfo_zip)
+        build_bucket.download_fileobj(location["objectKey"],  pfo_zip)
         
         with zipfile.ZipFile(pfo_zip) as myzip: 
             for nm in myzip.namelist(): 
@@ -23,12 +37,14 @@ def lambda_handler(event, context):
                 pfo_bucket.upload_fileobj(obj, nm, 
                     ExtraArgs={'ContentType': mimetypes.guess_type(nm)[0]})
                 pfo_bucket.Object(nm).Acl().put(ACL='public-read')
-                
+              
+        print 'Job done!'  
         topic.publish(Subject='Portfolio Deployed', Message='Portfolio deployed successfully')
+        if job: 
+            codepipeline = boto3.client('codepipeline')
+            codepipeline.put_job_success_result(jobId=job["id"])
     except: 
         topic.publish(Subject='Portfolio Deploy Failed', Message='Portfolio deploy failed')
         raise
     
     return 'Job Done'
-            
-
